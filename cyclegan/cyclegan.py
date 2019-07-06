@@ -18,6 +18,7 @@ import os
 
 class CycleGAN():
     def __init__(self):
+        os.makedirs("train", exist_ok=True)
         # Input shape
         self.img_rows = 128
         self.img_cols = 128
@@ -216,6 +217,7 @@ class CycleGAN():
                 # If at save interval => save generated image samples
                 if batch_i % sample_interval == 0:
                     self.sample_images(epoch, batch_i)
+                    self.combined.save_weights('train/%s-%d.h5' % (self.dataset_name, epoch))
 
     def sample_images(self, epoch, batch_i):
         os.makedirs('images/%s' % self.dataset_name, exist_ok=True)
@@ -252,7 +254,12 @@ class CycleGAN():
         fig.savefig("images/%s/%d_%d.png" % (self.dataset_name, epoch, batch_i))
         plt.close()
 
+    def load(self, epoch):
+        self.combined.load_weights('train/%s-%d.h5' % (self.dataset_name, epoch))
+
 
 if __name__ == '__main__':
     gan = CycleGAN()
-    gan.train(epochs=200, batch_size=1, sample_interval=200)
+    if len(sys.argv) > 1:
+        gan.load(sys.argv[1])
+    gan.train(epochs=200, batch_size=40, sample_interval=200)
