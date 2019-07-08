@@ -2,11 +2,12 @@ from __future__ import print_function, division
 import scipy
 
 from keras.datasets import mnist
+from keras import initializers
 from keras_contrib.layers.normalization.instancenormalization import InstanceNormalization
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, Concatenate
 from keras.layers import BatchNormalization, Activation, ZeroPadding2D
 from keras.layers.advanced_activations import LeakyReLU
-from keras.layers.convolutional import UpSampling2D, Conv2D
+from keras.layers.convolutional import Conv2DTranspose, Conv2D
 from keras.models import Sequential, Model
 from keras.optimizers import Adam
 import datetime
@@ -20,13 +21,15 @@ class CycleGAN():
     def __init__(self):
         os.makedirs("train", exist_ok=True)
         # Input shape
+        self.conv_init = initializers.RandomNormal(0, 0.02)
+        self.start_epoch = 0
         self.img_rows = 128
         self.img_cols = 128
         self.channels = 3
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
 
         # Configure data loader
-        self.dataset_name = 'apple2orange'
+        self.dataset_name = 'male2female'
         self.data_loader = DataLoader(dataset_name=self.dataset_name,
                                       img_res=(self.img_rows, self.img_cols))
 
@@ -40,7 +43,7 @@ class CycleGAN():
         self.df = 64
 
         # Loss weights
-        self.lambda_cycle = 10.0                    # Cycle-consistency loss
+        self.lambda_cycle = 5.0                    # Cycle-consistency loss
         self.lambda_id = 0.1 * self.lambda_cycle    # Identity loss
 
         optimizer = Adam(0.0002, 0.5)
@@ -104,20 +107,19 @@ class CycleGAN():
 
         def conv2d(layer_input, filters, f_size=4):
             """Layers used during downsampling"""
-            d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same')(layer_input)
-            d = LeakyReLU(alpha=0.2)(d)
+            d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same', kernel_initializer=self.conv_init)(layer_input)
             d = InstanceNormalization()(d)
+            d = LeakyReLU(alpha=0.2)(d)
             return d
 
-        def deconv2d(layer_input, skip_input, filters, f_size=4, dropout_rate=0):
+        def deconv2d(layer_input, skip_input, filters, f_size=3, dropout_rate=0):
             """Layers used during upsampling"""
-            u = UpSampling2D(size=2)(layer_input)
-            u = Conv2D(filters, kernel_size=f_size, strides=1, padding='same', activation='relu')(u)
+            u = Conv2DTranspose(filters, kernel_size=f_size, strides=2, padding='same', kernel_initializer=self.conv_init)(layer_input)
             if dropout_rate:
                 u = Dropout(dropout_rate)(u)
             u = InstanceNormalization()(u)
             u = Concatenate()([u, skip_input])
-            return u
+            return LeakyReLU(alpha=0.2)(u)
 
         # Image input
         d0 = Input(shape=self.img_shape)
@@ -133,8 +135,7 @@ class CycleGAN():
         u2 = deconv2d(u1, d2, self.gf*2)
         u3 = deconv2d(u2, d1, self.gf)
 
-        u4 = UpSampling2D(size=2)(u3)
-        output_img = Conv2D(self.channels, kernel_size=4, strides=1, padding='same', activation='tanh')(u4)
+        output_img = Conv2DTranspose(self.channels, kernel_size=7, strides=2, padding='same', activation='tanh', kernel_initializer=self.conv_init)(u3)
 
         return Model(d0, output_img)
 
@@ -142,7 +143,7 @@ class CycleGAN():
 
         def d_layer(layer_input, filters, f_size=4, normalization=True):
             """Discriminator layer"""
-            d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same')(layer_input)
+            d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same', kernel_initializer=self.conv_init)(layer_input)
             d = LeakyReLU(alpha=0.2)(d)
             if normalization:
                 d = InstanceNormalization()(d)
@@ -167,7 +168,7 @@ class CycleGAN():
         valid = np.ones((batch_size,) + self.disc_patch)
         fake = np.zeros((batch_size,) + self.disc_patch)
 
-        for epoch in range(epochs):
+        for epoch in range(self.start_epoch, epochs):
             for batch_i, (imgs_A, imgs_B) in enumerate(self.data_loader.load_batch(batch_size)):
 
                 # ----------------------
@@ -251,15 +252,16 @@ class CycleGAN():
                 axs[i, j].set_title(titles[j])
                 axs[i,j].axis('off')
                 cnt += 1
-        fig.savefig("images/%s/%d_%d.png" % (self.dataset_name, epoch, batch_i))
+        fig.savefig("images/%s/%d_%d.png" % (self.dataset_name, epoch, batch_i), dpi=200)
         plt.close()
 
     def load(self, epoch):
         self.combined.load_weights('train/%s-%d.h5' % (self.dataset_name, epoch))
+        self.start_epoch = epoch
 
 
 if __name__ == '__main__':
     gan = CycleGAN()
     if len(sys.argv) > 1:
-        gan.load(sys.argv[1])
-    gan.train(epochs=200, batch_size=40, sample_interval=200)
+        gan.load(int(sys.argv[1]))
+    gan.train(epochs=2000, batch_size=50, sample_interval=500)
