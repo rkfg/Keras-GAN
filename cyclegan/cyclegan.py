@@ -18,7 +18,7 @@ import numpy as np
 import os
 
 class CycleGAN():
-    def __init__(self):
+    def __init__(self, dataset):
         os.makedirs("train", exist_ok=True)
         # Input shape
         self.conv_init = initializers.RandomNormal(0, 0.02)
@@ -29,7 +29,7 @@ class CycleGAN():
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
 
         # Configure data loader
-        self.dataset_name = 'male2female'
+        self.dataset_name = dataset
         self.data_loader = DataLoader(dataset_name=self.dataset_name,
                                       img_res=(self.img_rows, self.img_cols))
 
@@ -39,7 +39,7 @@ class CycleGAN():
         self.disc_patch = (patch, patch, 1)
 
         # Number of filters in the first layer of G and D
-        self.gf = 32
+        self.gf = 64
         self.df = 64
 
         # Loss weights
@@ -108,18 +108,19 @@ class CycleGAN():
         def conv2d(layer_input, filters, f_size=4):
             """Layers used during downsampling"""
             d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same', kernel_initializer=self.conv_init)(layer_input)
-            d = InstanceNormalization()(d)
             d = LeakyReLU(alpha=0.2)(d)
+            d = InstanceNormalization()(d)
             return d
 
         def deconv2d(layer_input, skip_input, filters, f_size=3, dropout_rate=0):
             """Layers used during upsampling"""
             u = Conv2DTranspose(filters, kernel_size=f_size, strides=2, padding='same', kernel_initializer=self.conv_init)(layer_input)
+            u = LeakyReLU(alpha=0.2)(u)
             if dropout_rate:
                 u = Dropout(dropout_rate)(u)
             u = InstanceNormalization()(u)
             u = Concatenate()([u, skip_input])
-            return LeakyReLU(alpha=0.2)(u)
+            return u
 
         # Image input
         d0 = Input(shape=self.img_shape)
@@ -131,9 +132,9 @@ class CycleGAN():
         d4 = conv2d(d3, self.gf*8)
 
         # Upsampling
-        u1 = deconv2d(d4, d3, self.gf*4)
-        u2 = deconv2d(u1, d2, self.gf*2)
-        u3 = deconv2d(u2, d1, self.gf)
+        u1 = deconv2d(d4, d3, self.gf*4, dropout_rate=0.1)
+        u2 = deconv2d(u1, d2, self.gf*2, dropout_rate=0.1)
+        u3 = deconv2d(u2, d1, self.gf, dropout_rate=0.1)
 
         output_img = Conv2DTranspose(self.channels, kernel_size=7, strides=2, padding='same', activation='tanh', kernel_initializer=self.conv_init)(u3)
 
@@ -141,20 +142,21 @@ class CycleGAN():
 
     def build_discriminator(self):
 
-        def d_layer(layer_input, filters, f_size=4, normalization=True):
+        def d_layer(layer_input, filters, f_size=4, normalization=True, dropout_rate=0):
             """Discriminator layer"""
             d = Conv2D(filters, kernel_size=f_size, strides=2, padding='same', kernel_initializer=self.conv_init)(layer_input)
             d = LeakyReLU(alpha=0.2)(d)
+            d = Dropout(dropout_rate)(d)
             if normalization:
                 d = InstanceNormalization()(d)
             return d
 
         img = Input(shape=self.img_shape)
 
-        d1 = d_layer(img, self.df, normalization=False)
-        d2 = d_layer(d1, self.df*2)
-        d3 = d_layer(d2, self.df*4)
-        d4 = d_layer(d3, self.df*8)
+        d1 = d_layer(img, self.df, normalization=False, dropout_rate=0.1)
+        d2 = d_layer(d1, self.df*2, dropout_rate=0.1)
+        d3 = d_layer(d2, self.df*4, dropout_rate=0.1)
+        d4 = d_layer(d3, self.df*8, dropout_rate=0.1)
 
         validity = Conv2D(1, kernel_size=4, strides=1, padding='same')(d4)
 
@@ -261,7 +263,10 @@ class CycleGAN():
 
 
 if __name__ == '__main__':
-    gan = CycleGAN()
-    if len(sys.argv) > 1:
-        gan.load(int(sys.argv[1]))
-    gan.train(epochs=2000, batch_size=50, sample_interval=500)
+    if len(sys.argv) < 2:
+        print("Specify the dataset name")
+        sys.exit(1)
+    gan = CycleGAN(sys.argv[1])
+    if len(sys.argv) > 2:
+        gan.load(int(sys.argv[2]))
+    gan.train(epochs=2000, batch_size=40, sample_interval=50)
